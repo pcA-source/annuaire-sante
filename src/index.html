@@ -150,24 +150,63 @@
   </div>
 
 <script>
-// ─── Spécialités médicales françaises (source: NOS / Annuaire Santé) ───
+// ─── Spécialités médicales françaises avec codes NOS (TRE-R38-SpecialiteOrdinale) ───
 const SPECIALTIES = [
-  "Allergologie","Anatomie et cytologie pathologiques","Anesthésie-réanimation","Biologie médicale",
-  "Cardiologie","Chirurgie de la face et du cou","Chirurgie dentaire","Chirurgie générale",
-  "Chirurgie infantile","Chirurgie maxillo-faciale","Chirurgie orthopédique et traumatologie",
-  "Chirurgie plastique reconstructrice et esthétique","Chirurgie thoracique et cardiovasculaire",
-  "Chirurgie urologique","Chirurgie vasculaire","Chirurgie viscérale et digestive",
-  "Dermatologie et vénéréologie","Endocrinologie-diabétologie-nutrition","Gastro-entérologie et hépatologie",
-  "Gériatrie","Gynécologie médicale","Gynécologie-obstétrique","Hématologie","Hépatologie",
-  "Infirmier","Kinésithérapeute","Maïeutique (Sage-femme)","Médecine cardiovasculaire",
-  "Médecine d'urgence","Médecine du travail","Médecine générale","Médecine interne et immunologie clinique",
-  "Médecine intensive-réanimation","Médecine légale et expertises médicales",
-  "Médecine nucléaire","Médecine physique et de réadaptation","Médecine vasculaire",
-  "Néphrologie","Neurochirurgie","Neurologie","Oncologie","Ophtalmologie",
-  "Orthopédie dento-faciale","Orthophoniste","Orthoptiste","Oto-rhino-laryngologie",
-  "Pédiatrie","Pédicure-podologue","Pharmacien","Pneumologie","Psychiatrie",
-  "Radiologie et imagerie médicale","Radiothérapie","Rhumatologie","Sage-femme",
-  "Santé publique","Stomatologie","Urologie"
+  { label: "Allergologie", code: "SM57" },
+  { label: "Anatomie et Cytologie pathologiques", code: "SM01" },
+  { label: "Anesthésie-réanimation", code: "SM02" },
+  { label: "Biologie médicale", code: "SM03" },
+  { label: "Cardiologie et Maladies vasculaires", code: "SM04" },
+  { label: "Chirurgie générale", code: "SM05" },
+  { label: "Chirurgie infantile", code: "SM09" },
+  { label: "Chirurgie maxillo-faciale et Stomatologie", code: "SM07" },
+  { label: "Chirurgie orale", code: "SM56" },
+  { label: "Chirurgie orthopédique et Traumatologie", code: "SM08" },
+  { label: "Chirurgie plastique reconstructrice et esthétique", code: "SM10" },
+  { label: "Chirurgie thoracique et cardio-vasculaire", code: "SM11" },
+  { label: "Chirurgie urologique", code: "SM12" },
+  { label: "Chirurgie vasculaire", code: "SM13" },
+  { label: "Chirurgie viscérale et digestive", code: "SM14" },
+  { label: "Dermatologie et Vénéréologie", code: "SM15" },
+  { label: "Endocrinologie, diabétologie, nutrition", code: "SM62" },
+  { label: "Gastro-entérologie et Hépatologie", code: "SM24" },
+  { label: "Génétique médicale", code: "SM17" },
+  { label: "Gériatrie", code: "SM18" },
+  { label: "Gynécologie médicale", code: "SM19" },
+  { label: "Gynécologie-obstétrique", code: "SM20" },
+  { label: "Hématologie", code: "SM21" },
+  { label: "Maladies infectieuses et tropicales", code: "SM58" },
+  { label: "Médecine cardiovasculaire", code: "SM73" },
+  { label: "Médecine d'urgence", code: "SM59" },
+  { label: "Médecine du travail", code: "SM25" },
+  { label: "Médecine générale", code: "SM54" },
+  { label: "Médecine intensive-réanimation", code: "SM46" },
+  { label: "Médecine interne", code: "SM27" },
+  { label: "Médecine interne et immunologie clinique", code: "SM72" },
+  { label: "Médecine légale et expertises médicales", code: "SM60" },
+  { label: "Médecine nucléaire", code: "SM28" },
+  { label: "Médecine physique et de réadaptation", code: "SM29" },
+  { label: "Médecine vasculaire", code: "SM61" },
+  { label: "Néphrologie", code: "SM30" },
+  { label: "Neuro-chirurgie", code: "SM31" },
+  { label: "Neurologie", code: "SM32" },
+  { label: "ORL et Chirurgie cervico-faciale", code: "SM34" },
+  { label: "Oncologie, option médicale", code: "SM36" },
+  { label: "Oncologie, option radiothérapie", code: "SM37" },
+  { label: "Ophtalmologie", code: "SM38" },
+  { label: "Orthopédie dento-faciale", code: "SCD01" },
+  { label: "Oto-rhino-laryngologie", code: "SM39" },
+  { label: "Pédiatrie", code: "SM40" },
+  { label: "Pneumologie", code: "SM41" },
+  { label: "Psychiatrie", code: "SM42" },
+  { label: "Psychiatrie, option enfant et adolescent", code: "SM43" },
+  { label: "Radiologie et imagerie médicale", code: "SM74" },
+  { label: "Radio-diagnostic", code: "SM44" },
+  { label: "Radio-thérapie", code: "SM45" },
+  { label: "Rhumatologie", code: "SM48" },
+  { label: "Santé publique", code: "SM75" },
+  { label: "Stomatologie", code: "SM50" },
+  { label: "Médecine bucco-dentaire", code: "SCD03" },
 ];
 
 // ─── Config ───
@@ -182,9 +221,9 @@ async function doSearch(e) {
   const name = document.getElementById('input-name').value.trim();
   const rpps = document.getElementById('input-rpps').value.trim();
   const city = document.getElementById('input-city').value.trim();
-  const specialty = document.getElementById('input-specialty').value.trim();
+  const specialtyText = document.getElementById('input-specialty').value.trim();
 
-  if (!name && !rpps && !city && !specialty) {
+  if (!name && !rpps && !city && !specialtyText) {
     showToast('Remplis au moins un critère de recherche', 'warn');
     return;
   }
@@ -192,11 +231,16 @@ async function doSearch(e) {
   setLoading(true);
   hideError();
 
+  // Find the specialty code from the label
+  const specObj = SPECIALTIES.find(s => s.label.toLowerCase() === specialtyText.toLowerCase());
+  const specialtyCode = specObj ? specObj.code : '';
+
   const params = new URLSearchParams();
   if (name) params.set('name', name);
   if (rpps) params.set('rpps', rpps);
   if (city) params.set('city', city);
-  if (specialty) params.set('specialty', specialty);
+  if (specialtyCode) params.set('specialty_code', specialtyCode);
+  if (specialtyText && !specialtyCode) params.set('specialty', specialtyText);
 
   try {
     const fetchUrl = `${API_URL}/search?${params.toString()}`;
@@ -462,7 +506,6 @@ function esc(str) {
 function onSpecialtyInput(value) {
   const list = document.getElementById('specialty-suggestions');
   if (!value || value.length < 1) {
-    // Show all specialties when focused with empty input
     if (document.activeElement === document.getElementById('input-specialty') && !value) {
       showSpecialtySuggestions(SPECIALTIES.slice(0, 15));
     } else {
@@ -471,8 +514,8 @@ function onSpecialtyInput(value) {
     return;
   }
   const lower = value.toLowerCase();
-  const matches = SPECIALTIES.filter(s => s.toLowerCase().includes(lower)).slice(0, 10);
-  if (matches.length === 0 || (matches.length === 1 && matches[0].toLowerCase() === lower)) {
+  const matches = SPECIALTIES.filter(s => s.label.toLowerCase().includes(lower)).slice(0, 10);
+  if (matches.length === 0 || (matches.length === 1 && matches[0].label.toLowerCase() === lower)) {
     list.classList.add('hidden');
     return;
   }
@@ -483,7 +526,7 @@ function showSpecialtySuggestions(matches) {
   const list = document.getElementById('specialty-suggestions');
   list.innerHTML = matches.map(s =>
     `<li class="px-4 py-2 text-sm text-gray-700 hover:bg-primary-50 hover:text-primary-700 cursor-pointer transition-colors"
-         onmousedown="selectSpecialty('${s.replace(/'/g, "\\'")}')">${esc(s)}</li>`
+         onmousedown="selectSpecialty('${s.label.replace(/'/g, "\\'")}')">${esc(s.label)}</li>`
   ).join('');
   list.classList.remove('hidden');
 }

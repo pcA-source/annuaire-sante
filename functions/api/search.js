@@ -24,6 +24,7 @@ async function handleSearch(params, env) {
   const name = params.get('name') || '';
   const city = params.get('city') || '';
   const specialty = params.get('specialty') || '';
+  const specialtyCode = params.get('specialty_code') || '';
   const rpps = params.get('rpps') || '';
   const count = Math.min(parseInt(params.get('count') || '50', 10), 200);
 
@@ -32,17 +33,42 @@ async function handleSearch(params, env) {
     return await searchByRpps(rpps, env);
   }
 
-  // ─── Strategy 2: Search by name (+ optional city/specialty post-filter) ───
+  // ─── Strategy 2: Search by specialty code (qualification-code on Practitioner) ───
+  if (specialtyCode) {
+    return await searchByQualificationCode(specialtyCode, name, city, count, env);
+  }
+
+  // ─── Strategy 3: Search by name (+ optional city post-filter) ───
   if (name) {
     return await searchByName(name, city, specialty, count, env);
   }
 
-  // ─── Strategy 3: Search by specialty/city only (via PractitionerRole) ───
-  if (specialty || city) {
+  // ─── Strategy 4: Search by city only (via PractitionerRole) ───
+  if (city) {
     return await searchByRoleFilters(city, specialty, count, env);
   }
 
   return jsonResponse({ error: 'Remplis au moins un critère de recherche' }, 400);
+}
+
+// ─── Search by qualification-code (specialty) ───
+async function searchByQualificationCode(code, name, city, count, env) {
+  const fhirParams = new URLSearchParams();
+  fhirParams.set('qualification-code', code);
+  fhirParams.set('_count', count.toString());
+  if (name) fhirParams.set('name', name);
+
+  const bundle = await fhirFetch(`${API_BASE}/Practitioner?${fhirParams}`, env);
+  if (!bundle.entry?.length) return jsonResponse({ total: 0, totalFhir: bundle.total || 0, results: [] });
+
+  const practitioners = bundle.entry.map(e => parsePractitioner(e.resource));
+  const roles = await fetchRolesForPractitioners(practitioners.map(p => p.id), env);
+  let results = mergePractitionersAndRoles(practitioners, roles.practitionerRoles, roles.organizations);
+
+  // Post-filter by city if provided
+  results = filterByCity(results, city);
+
+  return jsonResponse({ total: results.length, totalFhir: bundle.total || 0, results });
 }
 
 // ─── Search by RPPS ───
