@@ -173,11 +173,38 @@ async function searchByRpps(rpps, env) {
 
 // ─── Search by name ───
 async function searchByName(name, city, specialty, count, env) {
+  // Split "Donal Erwan" into family=Donal & given=Erwan for better results
+  const parts = name.trim().split(/\s+/);
+
   const fhirParams = new URLSearchParams();
-  fhirParams.set('name', name);
+  if (parts.length >= 2) {
+    // Try family + given (most common: "Nom Prénom")
+    fhirParams.set('family', parts[0]);
+    fhirParams.set('given', parts.slice(1).join(' '));
+  } else {
+    fhirParams.set('name', name);
+  }
   fhirParams.set('_count', count.toString());
 
-  const bundle = await fhirFetch(`${API_BASE}/Practitioner?${fhirParams}`, env);
+  let bundle = await fhirFetch(`${API_BASE}/Practitioner?${fhirParams}`, env);
+
+  // Fallback: if family+given gives 0, try reversed (Prénom Nom) or just name
+  if ((!bundle.entry || bundle.entry.length === 0) && parts.length >= 2) {
+    const fallbackParams = new URLSearchParams();
+    fallbackParams.set('family', parts[parts.length - 1]);
+    fallbackParams.set('given', parts.slice(0, -1).join(' '));
+    fallbackParams.set('_count', count.toString());
+    bundle = await fhirFetch(`${API_BASE}/Practitioner?${fallbackParams}`, env);
+
+    // Last fallback: just use name
+    if (!bundle.entry || bundle.entry.length === 0) {
+      const lastParams = new URLSearchParams();
+      lastParams.set('name', name);
+      lastParams.set('_count', count.toString());
+      bundle = await fhirFetch(`${API_BASE}/Practitioner?${lastParams}`, env);
+    }
+  }
+
   if (!bundle.entry?.length) return jsonResponse({ total: 0, totalFhir: bundle.total || 0, results: [] });
 
   const practitioners = bundle.entry.map(e => parsePractitioner(e.resource));
