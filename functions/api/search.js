@@ -26,7 +26,7 @@ async function handleSearch(params, env) {
   const specialty = params.get('specialty') || '';
   const specialtyCode = params.get('specialty_code') || '';
   const rpps = params.get('rpps') || '';
-  const count = Math.min(parseInt(params.get('count') || '50', 10), 200);
+  const count = Math.min(parseInt(params.get('count') || '200', 10), 500);
 
   // ─── Strategy 1: Search by RPPS ───
   if (rpps) {
@@ -60,8 +60,16 @@ async function searchByQualificationCode(code, name, city, count, env) {
 
   const fhirParams = new URLSearchParams();
   fhirParams.set('qualification-code', code);
-  fhirParams.set('_count', count.toString());
-  if (name) fhirParams.set('name', name);
+  fhirParams.set('_count', '200');
+  if (name) {
+    const parts = name.trim().split(/\s+/);
+    if (parts.length >= 2) {
+      fhirParams.set('family', parts[0]);
+      fhirParams.set('given', parts.slice(1).join(' '));
+    } else {
+      fhirParams.set('name', name);
+    }
+  }
 
   const bundle = await fhirFetch(`${API_BASE}/Practitioner?${fhirParams}`, env);
   if (!bundle.entry?.length) return jsonResponse({ total: 0, totalFhir: bundle.total || 0, results: [] });
@@ -78,7 +86,7 @@ async function searchByQualificationCode(code, name, city, count, env) {
 
 // ─── Search by specialty + city (reverse lookup via Organizations) ───
 async function searchBySpecialtyAndCity(qualCode, city, count, env) {
-  // Step 1: Find organizations in that city
+  // Step 1: Find ALL organizations in that city (paginate up to 3 pages = 600 orgs)
   const orgParams = new URLSearchParams();
   orgParams.set('address-city', city);
   orgParams.set('_count', '200');
@@ -87,9 +95,20 @@ async function searchBySpecialtyAndCity(qualCode, city, count, env) {
   const orgBundle = await fhirFetch(`${API_BASE}/Organization?${orgParams}`, env);
   if (!orgBundle.entry?.length) return jsonResponse({ total: 0, results: [], message: `Aucune structure trouvée à ${city}` });
 
+  let allOrgEntries = [...orgBundle.entry];
+  // Paginate if more orgs exist
+  let nextOrgUrl = orgBundle.link?.find(l => l.relation === 'next')?.url;
+  let orgPages = 1;
+  while (nextOrgUrl && orgPages < 5) {
+    const nextBundle = await fhirFetch(nextOrgUrl, env);
+    if (nextBundle.entry) allOrgEntries.push(...nextBundle.entry);
+    nextOrgUrl = nextBundle.link?.find(l => l.relation === 'next')?.url;
+    orgPages++;
+  }
+
   const orgs = {};
   const orgIds = [];
-  for (const entry of orgBundle.entry) {
+  for (const entry of allOrgEntries) {
     const org = parseOrganization(entry.resource);
     orgs[org.id] = org;
     orgIds.push(org.id);
@@ -178,13 +197,12 @@ async function searchByName(name, city, specialty, count, env) {
 
   const fhirParams = new URLSearchParams();
   if (parts.length >= 2) {
-    // Try family + given (most common: "Nom Prénom")
     fhirParams.set('family', parts[0]);
     fhirParams.set('given', parts.slice(1).join(' '));
   } else {
     fhirParams.set('name', name);
   }
-  fhirParams.set('_count', count.toString());
+  fhirParams.set('_count', '200');
 
   let bundle = await fhirFetch(`${API_BASE}/Practitioner?${fhirParams}`, env);
 
@@ -193,21 +211,37 @@ async function searchByName(name, city, specialty, count, env) {
     const fallbackParams = new URLSearchParams();
     fallbackParams.set('family', parts[parts.length - 1]);
     fallbackParams.set('given', parts.slice(0, -1).join(' '));
-    fallbackParams.set('_count', count.toString());
+    fallbackParams.set('_count', '200');
     bundle = await fhirFetch(`${API_BASE}/Practitioner?${fallbackParams}`, env);
 
-    // Last fallback: just use name
     if (!bundle.entry || bundle.entry.length === 0) {
       const lastParams = new URLSearchParams();
       lastParams.set('name', name);
-      lastParams.set('_count', count.toString());
+      lastParams.set('_count', '200');
       bundle = await fhirFetch(`${API_BASE}/Practitioner?${lastParams}`, env);
     }
   }
 
   if (!bundle.entry?.length) return jsonResponse({ total: 0, totalFhir: bundle.total || 0, results: [] });
 
-  const practitioners = bundle.entry.map(e => parsePractitioner(e.resource));
+  // If filtering by city or specialty, paginate to get more results (up to 3 pages)
+  let allEntries = [...bundle.entry];
+  const needsPostFilter = !!(city || specialty);
+  if (needsPostFilter && bundle.total > allEntries.length) {
+    const nextUrl = bundle.link?.find(l => l.relation === 'next')?.url;
+    if (nextUrl) {
+      const page2 = await fhirFetch(nextUrl, env);
+      if (page2.entry) allEntries.push(...page2.entry);
+      // Page 3 if still needed
+      const nextUrl2 = page2.link?.find(l => l.relation === 'next')?.url;
+      if (nextUrl2 && allEntries.length < 600) {
+        const page3 = await fhirFetch(nextUrl2, env);
+        if (page3.entry) allEntries.push(...page3.entry);
+      }
+    }
+  }
+
+  const practitioners = allEntries.map(e => parsePractitioner(e.resource));
   const roles = await fetchRolesForPractitioners(practitioners.map(p => p.id), env);
   let results = mergePractitionersAndRoles(practitioners, roles.practitionerRoles, roles.organizations);
 
@@ -215,7 +249,16 @@ async function searchByName(name, city, specialty, count, env) {
   results = filterByCity(results, city);
   results = filterBySpecialty(results, specialty);
 
-  return jsonResponse({ total: results.length, totalFhir: bundle.total || 0, results });
+  // Cap results
+  const totalFhir = bundle.total || 0;
+  results = results.slice(0, count);
+
+  return jsonResponse({
+    total: results.length,
+    totalFhir,
+    message: totalFhir > 200 && !needsPostFilter ? `${totalFhir} résultats au total — affinez votre recherche (ville, spécialité) pour des résultats plus précis` : undefined,
+    results,
+  });
 }
 
 // ─── Search by role filters (specialty/city without name) ───

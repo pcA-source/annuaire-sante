@@ -261,8 +261,13 @@ async function doSearch(e) {
     currentResults = data.results || [];
     selectedIndices = new Set();
     renderResults(currentResults);
-    document.getElementById('result-count').textContent =
-      `${currentResults.length} résultat${currentResults.length > 1 ? 's' : ''}`;
+    const totalFhir = data.totalFhir || 0;
+    let countText = `${currentResults.length} résultat${currentResults.length > 1 ? 's' : ''}`;
+    if (totalFhir > currentResults.length) {
+      countText += ` sur ${totalFhir.toLocaleString('fr-FR')}`;
+    }
+    document.getElementById('result-count').textContent = countText;
+    if (data.message) showToast(data.message, 'warn');
     const hasResults = currentResults.length > 0;
     document.getElementById('btn-export').classList.toggle('hidden', !hasResults);
     document.getElementById('btn-export').classList.toggle('flex', hasResults);
