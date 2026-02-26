@@ -53,6 +53,11 @@ async function handleSearch(params, env) {
 
 // ─── Search by qualification-code (specialty) ───
 async function searchByQualificationCode(code, name, city, count, env) {
+  // If city is provided: search Organizations in that city first, then find practitioners
+  if (city && !name) {
+    return await searchBySpecialtyAndCity(code, city, count, env);
+  }
+
   const fhirParams = new URLSearchParams();
   fhirParams.set('qualification-code', code);
   fhirParams.set('_count', count.toString());
@@ -65,10 +70,89 @@ async function searchByQualificationCode(code, name, city, count, env) {
   const roles = await fetchRolesForPractitioners(practitioners.map(p => p.id), env);
   let results = mergePractitionersAndRoles(practitioners, roles.practitionerRoles, roles.organizations);
 
-  // Post-filter by city if provided
+  // Post-filter by city if provided (when name is also given)
   results = filterByCity(results, city);
 
   return jsonResponse({ total: results.length, totalFhir: bundle.total || 0, results });
+}
+
+// ─── Search by specialty + city (reverse lookup via Organizations) ───
+async function searchBySpecialtyAndCity(qualCode, city, count, env) {
+  // Step 1: Find organizations in that city
+  const orgParams = new URLSearchParams();
+  orgParams.set('address-city', city);
+  orgParams.set('_count', '200');
+  orgParams.set('_elements', 'id,name,address,telecom');
+
+  const orgBundle = await fhirFetch(`${API_BASE}/Organization?${orgParams}`, env);
+  if (!orgBundle.entry?.length) return jsonResponse({ total: 0, results: [], message: `Aucune structure trouvée à ${city}` });
+
+  const orgs = {};
+  const orgIds = [];
+  for (const entry of orgBundle.entry) {
+    const org = parseOrganization(entry.resource);
+    orgs[org.id] = org;
+    orgIds.push(org.id);
+  }
+
+  // Step 2: Find PractitionerRoles linked to those organizations (batched)
+  const practitionerIds = new Set();
+  const rolesByPractitioner = {};
+  const batchSize = 20;
+
+  for (let i = 0; i < orgIds.length; i += batchSize) {
+    const batch = orgIds.slice(i, i + batchSize);
+    const roleParams = new URLSearchParams();
+    roleParams.set('organization', batch.join(','));
+    roleParams.set('_include', 'PractitionerRole:practitioner');
+    roleParams.set('_count', '200');
+
+    const roleBundle = await fhirFetch(`${API_BASE}/PractitionerRole?${roleParams}`, env);
+    if (!roleBundle.entry) continue;
+
+    for (const entry of roleBundle.entry) {
+      const r = entry.resource;
+      if (r.resourceType === 'PractitionerRole') {
+        const role = parsePractitionerRole(r);
+        if (role.organizationId && orgs[role.organizationId]) {
+          role.organization = orgs[role.organizationId];
+        }
+        const pid = role.practitionerId;
+        practitionerIds.add(pid);
+        if (!rolesByPractitioner[pid]) rolesByPractitioner[pid] = [];
+        rolesByPractitioner[pid].push(role);
+      }
+    }
+  }
+
+  if (practitionerIds.size === 0) return jsonResponse({ total: 0, results: [] });
+
+  // Step 3: Fetch those practitioners filtered by qualification-code
+  const matchedPractitioners = [];
+  const pidArray = [...practitionerIds];
+
+  for (let i = 0; i < pidArray.length; i += batchSize) {
+    const batch = pidArray.slice(i, i + batchSize);
+    const practParams = new URLSearchParams();
+    practParams.set('_id', batch.join(','));
+    practParams.set('qualification-code', qualCode);
+    practParams.set('_count', '200');
+
+    const practBundle = await fhirFetch(`${API_BASE}/Practitioner?${practParams}`, env);
+    if (practBundle.entry) {
+      for (const entry of practBundle.entry) {
+        matchedPractitioners.push(parsePractitioner(entry.resource));
+      }
+    }
+  }
+
+  // Merge
+  const results = matchedPractitioners.map(p => ({
+    ...p,
+    roles: rolesByPractitioner[p.id] || [],
+  })).slice(0, count);
+
+  return jsonResponse({ total: results.length, results });
 }
 
 // ─── Search by RPPS ───
