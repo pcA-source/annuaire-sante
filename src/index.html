@@ -243,6 +243,18 @@ const SPECIALTIES = [
   { label: "Santé publique", code: "SM75" },
   { label: "Stomatologie", code: "SM50" },
   { label: "Médecine bucco-dentaire", code: "SCD03" },
+  // ─── Professions paramédicales (TRE-G15-ProfessionSante) ───
+  { label: "Infirmier", code: "60" },
+  { label: "Masseur-kinésithérapeute", code: "70" },
+  { label: "Pharmacien", code: "21" },
+  { label: "Sage-femme", code: "50" },
+  { label: "Orthophoniste", code: "91" },
+  { label: "Orthoptiste", code: "92" },
+  { label: "Pédicure-podologue", code: "94" },
+  { label: "Diététicien", code: "98" },
+  { label: "Ergothérapeute", code: "96" },
+  { label: "Psychomotricien", code: "95" },
+  { label: "Manipulateur en électroradiologie", code: "86" },
 ];
 
 // ─── Config ───
@@ -355,6 +367,7 @@ function renderResults(results) {
               <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
               ${esc(displayAddress)}
             </p>` : ''}
+            ${(() => { const phones = p.roles?.flatMap(r => (r.telecoms || []).filter(t => t.system === 'phone').map(t => t.value)).filter(Boolean) || []; const uniquePhones = [...new Set(phones)]; return uniquePhones.length ? `<p class="text-sm text-gray-500 flex items-center gap-1">📞 ${uniquePhones.map(esc).join(' · ')}</p>` : ''; })()}
           </div>
           <div class="flex items-center gap-2 shrink-0">
             <button onclick="event.stopPropagation(); copyCard(${i})" title="Copier la fiche"
