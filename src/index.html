@@ -176,8 +176,8 @@ async function doSearch(e) {
 
   try {
     const res = await fetch(`${API_URL}/search?${params.toString()}`);
-    if (!res.ok) throw new Error(`Erreur ${res.status}`);
     const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `Erreur ${res.status}`);
 
     currentResults = data.results || [];
     renderResults(currentResults);

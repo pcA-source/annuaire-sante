@@ -27,63 +27,119 @@ async function handleSearch(params, env) {
   const rpps = params.get('rpps') || '';
   const count = Math.min(parseInt(params.get('count') || '50', 10), 200);
 
-  const fhirParams = new URLSearchParams();
-  fhirParams.set('_count', count.toString());
-
+  // ─── Strategy 1: Search by RPPS ───
   if (rpps) {
-    fhirParams.set('identifier', `https://rpps.esante.gouv.fr|${rpps}`);
-  } else {
-    if (name) fhirParams.set('name', name);
+    return await searchByRpps(rpps, env);
   }
 
-  // Fetch Practitioners
-  const practitionerUrl = `${API_BASE}/Practitioner?${fhirParams.toString()}`;
-  const bundle = await fhirFetch(practitionerUrl, env);
-
-  if (!bundle.entry || bundle.entry.length === 0) {
-    return jsonResponse({ total: 0, results: [] });
+  // ─── Strategy 2: Search by name (+ optional city/specialty post-filter) ───
+  if (name) {
+    return await searchByName(name, city, specialty, count, env);
   }
 
-  const practitioners = bundle.entry.map(e => parsePractitioner(e.resource));
-  const practitionerIds = practitioners.map(p => p.id);
-
-  // Fetch PractitionerRoles with Organization included
-  const roles = await fetchRolesForPractitioners(practitionerIds, env);
-
-  // Merge
-  const results = mergePractitionersAndRoles(practitioners, roles.practitionerRoles, roles.organizations);
-
-  // Post-filter by city
-  let filtered = results;
-  if (city) {
-    const cityLower = city.toLowerCase();
-    filtered = filtered.filter(r =>
-      r.roles.some(role =>
-        role.address?.toLowerCase().includes(cityLower) ||
-        role.city?.toLowerCase().includes(cityLower) ||
-        role.organization?.city?.toLowerCase().includes(cityLower) ||
-        role.organization?.address?.toLowerCase().includes(cityLower)
-      )
-    );
-  }
-  // Post-filter by specialty
-  if (specialty) {
-    const specLower = specialty.toLowerCase();
-    filtered = filtered.filter(r =>
-      r.roles.some(role =>
-        role.specialties?.some(s => s.toLowerCase().includes(specLower))
-      ) ||
-      r.qualifications?.some(q => q.display?.toLowerCase().includes(specLower))
-    );
+  // ─── Strategy 3: Search by specialty/city only (via PractitionerRole) ───
+  if (specialty || city) {
+    return await searchByRoleFilters(city, specialty, count, env);
   }
 
-  return jsonResponse({
-    total: filtered.length,
-    totalFhir: bundle.total || 0,
-    results: filtered,
-  });
+  return jsonResponse({ error: 'Remplis au moins un critère de recherche' }, 400);
 }
 
+// ─── Search by RPPS ───
+async function searchByRpps(rpps, env) {
+  const fhirParams = new URLSearchParams();
+  fhirParams.set('identifier', `https://rpps.esante.gouv.fr|${rpps}`);
+  fhirParams.set('_count', '10');
+
+  const bundle = await fhirFetch(`${API_BASE}/Practitioner?${fhirParams}`, env);
+  if (!bundle.entry?.length) return jsonResponse({ total: 0, results: [] });
+
+  const practitioners = bundle.entry.map(e => parsePractitioner(e.resource));
+  const roles = await fetchRolesForPractitioners(practitioners.map(p => p.id), env);
+  const results = mergePractitionersAndRoles(practitioners, roles.practitionerRoles, roles.organizations);
+
+  return jsonResponse({ total: results.length, results });
+}
+
+// ─── Search by name ───
+async function searchByName(name, city, specialty, count, env) {
+  const fhirParams = new URLSearchParams();
+  fhirParams.set('name', name);
+  fhirParams.set('_count', count.toString());
+
+  const bundle = await fhirFetch(`${API_BASE}/Practitioner?${fhirParams}`, env);
+  if (!bundle.entry?.length) return jsonResponse({ total: 0, totalFhir: bundle.total || 0, results: [] });
+
+  const practitioners = bundle.entry.map(e => parsePractitioner(e.resource));
+  const roles = await fetchRolesForPractitioners(practitioners.map(p => p.id), env);
+  let results = mergePractitionersAndRoles(practitioners, roles.practitionerRoles, roles.organizations);
+
+  // Post-filter
+  results = filterByCity(results, city);
+  results = filterBySpecialty(results, specialty);
+
+  return jsonResponse({ total: results.length, totalFhir: bundle.total || 0, results });
+}
+
+// ─── Search by role filters (specialty/city without name) ───
+async function searchByRoleFilters(city, specialty, count, env) {
+  // Search PractitionerRole directly — supports specialty as a search param
+  const fhirParams = new URLSearchParams();
+  fhirParams.set('_count', count.toString());
+  fhirParams.set('_include', 'PractitionerRole:practitioner');
+  fhirParams.set('_include', 'PractitionerRole:organization');
+
+  if (specialty) {
+    // FHIR supports text search on specialty
+    fhirParams.set('role', specialty);
+  }
+
+  const bundle = await fhirFetch(`${API_BASE}/PractitionerRole?${fhirParams}`, env);
+  if (!bundle.entry?.length) return jsonResponse({ total: 0, results: [] });
+
+  // Separate resources by type
+  const practitionerRoles = [];
+  const practitioners = {};
+  const organizations = {};
+
+  for (const entry of bundle.entry) {
+    const r = entry.resource;
+    if (r.resourceType === 'PractitionerRole') {
+      practitionerRoles.push(parsePractitionerRole(r));
+    } else if (r.resourceType === 'Practitioner') {
+      practitioners[r.id] = parsePractitioner(r);
+    } else if (r.resourceType === 'Organization') {
+      organizations[r.id] = parseOrganization(r);
+    }
+  }
+
+  // Group roles by practitioner
+  const practByRoles = {};
+  for (const role of practitionerRoles) {
+    if (role.organizationId && organizations[role.organizationId]) {
+      role.organization = organizations[role.organizationId];
+    }
+    const pid = role.practitionerId;
+    if (!practByRoles[pid]) practByRoles[pid] = [];
+    practByRoles[pid].push(role);
+  }
+
+  // Build results
+  let results = Object.entries(practByRoles).map(([pid, roles]) => {
+    const pract = practitioners[pid] || { id: pid, lastName: '', firstName: '', rpps: null, identifiers: [], qualifications: [] };
+    return { ...pract, roles };
+  });
+
+  // Post-filter by city
+  results = filterByCity(results, city);
+
+  // Post-filter by specialty text (more precise than FHIR role param)
+  results = filterBySpecialty(results, specialty);
+
+  return jsonResponse({ total: results.length, totalFhir: bundle.total || 0, results });
+}
+
+// ─── Shared: fetch roles for practitioner IDs ───
 async function fetchRolesForPractitioners(ids, env) {
   const practitionerRoles = [];
   const organizations = {};
@@ -96,8 +152,7 @@ async function fetchRolesForPractitioners(ids, env) {
     params.set('_count', '200');
     params.set('_include', 'PractitionerRole:organization');
 
-    const url = `${API_BASE}/PractitionerRole?${params.toString()}`;
-    const bundle = await fhirFetch(url, env);
+    const bundle = await fhirFetch(`${API_BASE}/PractitionerRole?${params}`, env);
 
     if (bundle.entry) {
       for (const entry of bundle.entry) {
@@ -113,11 +168,36 @@ async function fetchRolesForPractitioners(ids, env) {
   return { practitionerRoles, organizations };
 }
 
+// ─── Filters ───
+function filterByCity(results, city) {
+  if (!city) return results;
+  const cityLower = city.toLowerCase();
+  return results.filter(r =>
+    r.roles.some(role =>
+      role.address?.toLowerCase().includes(cityLower) ||
+      role.city?.toLowerCase().includes(cityLower) ||
+      role.organization?.city?.toLowerCase().includes(cityLower) ||
+      role.organization?.address?.toLowerCase().includes(cityLower)
+    )
+  );
+}
+
+function filterBySpecialty(results, specialty) {
+  if (!specialty) return results;
+  const specLower = specialty.toLowerCase();
+  return results.filter(r =>
+    r.roles.some(role =>
+      role.specialties?.some(s => s.toLowerCase().includes(specLower))
+    ) ||
+    r.qualifications?.some(q => q.display?.toLowerCase().includes(specLower))
+  );
+}
+
+// ─── Merge ───
 function mergePractitionersAndRoles(practitioners, roles, orgs) {
   const rolesByPractitioner = {};
   for (const role of roles) {
     if (!role.practitionerId) continue;
-    // Attach org
     if (role.organizationId && orgs[role.organizationId]) {
       role.organization = orgs[role.organizationId];
     }
