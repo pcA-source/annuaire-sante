@@ -199,8 +199,12 @@ async function doSearch(e) {
   if (specialty) params.set('specialty', specialty);
 
   try {
-    const res = await fetch(`${API_URL}/search?${params.toString()}`);
+    const fetchUrl = `${API_URL}/search?${params.toString()}`;
+    console.log('[Annuaire] Fetching:', fetchUrl);
+    const res = await fetch(fetchUrl);
+    console.log('[Annuaire] Response status:', res.status);
     const data = await res.json();
+    console.log('[Annuaire] Data:', data);
     if (!res.ok) throw new Error(data.error || `Erreur ${res.status}`);
 
     currentResults = data.results || [];
