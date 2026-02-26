@@ -304,7 +304,7 @@ async function doSearch(e) {
     document.getElementById('btn-export').classList.toggle('flex', hasResults);
     document.getElementById('btn-select-all').classList.toggle('hidden', !hasResults);
     document.getElementById('btn-select-all').classList.toggle('flex', hasResults);
-    updateSelectionUI();
+    updateBasketUI();
   } catch (err) {
     showError(err.message);
     currentResults = [];
