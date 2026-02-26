@@ -47,10 +47,16 @@
           <p class="text-xs text-gray-500">Recherche de professionnels de santé</p>
         </div>
       </div>
-      <button onclick="exportCSV()" id="btn-export" class="hidden items-center gap-2 px-4 py-2 bg-accent-500 hover:bg-accent-600 text-white text-sm font-medium rounded-lg transition-colors">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-        Export CSV
-      </button>
+      <div class="flex items-center gap-3">
+        <span id="selection-count" class="hidden text-sm font-medium text-primary-700 bg-primary-50 px-3 py-1.5 rounded-full"></span>
+        <button onclick="toggleSelectAll()" id="btn-select-all" class="hidden items-center gap-2 px-3 py-2 text-gray-600 hover:text-gray-800 text-sm font-medium border border-gray-300 rounded-lg transition-colors">
+          Tout sélectionner
+        </button>
+        <button onclick="exportCSV()" id="btn-export" class="hidden items-center gap-2 px-4 py-2 bg-accent-500 hover:bg-accent-600 text-white text-sm font-medium rounded-lg transition-colors">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+          Export CSV
+        </button>
+      </div>
     </div>
   </header>
 
@@ -214,6 +220,7 @@ const API_URL = '/api'; // Cloudflare Worker proxy (same domain)
 
 let currentResults = [];
 let currentDetail = null;
+let selectedIndices = new Set();
 
 // ─── Search ───
 async function doSearch(e) {
@@ -252,11 +259,16 @@ async function doSearch(e) {
     if (!res.ok) throw new Error(data.error || `Erreur ${res.status}`);
 
     currentResults = data.results || [];
+    selectedIndices = new Set();
     renderResults(currentResults);
     document.getElementById('result-count').textContent =
       `${currentResults.length} résultat${currentResults.length > 1 ? 's' : ''}`;
-    document.getElementById('btn-export').classList.toggle('hidden', currentResults.length === 0);
-    document.getElementById('btn-export').classList.toggle('flex', currentResults.length > 0);
+    const hasResults = currentResults.length > 0;
+    document.getElementById('btn-export').classList.toggle('hidden', !hasResults);
+    document.getElementById('btn-export').classList.toggle('flex', hasResults);
+    document.getElementById('btn-select-all').classList.toggle('hidden', !hasResults);
+    document.getElementById('btn-select-all').classList.toggle('flex', hasResults);
+    updateSelectionUI();
   } catch (err) {
     showError(err.message);
     currentResults = [];
@@ -288,10 +300,15 @@ function renderResults(results) {
     const displayAddress = mainRole.address || mainRole.organization?.address || '';
     const displayOrg = mainRole.organization?.name || '';
 
+    const isSelected = selectedIndices.has(i);
     return `
-      <div class="bg-white rounded-xl border border-gray-200 p-5 card-hover fade-in cursor-pointer" onclick="openDetail(${i})" style="animation-delay: ${i * 50}ms">
-        <div class="flex items-start justify-between gap-4">
-          <div class="flex-1 min-w-0">
+      <div class="bg-white rounded-xl border ${isSelected ? 'border-primary-400 ring-2 ring-primary-100' : 'border-gray-200'} p-5 card-hover fade-in" style="animation-delay: ${i * 50}ms">
+        <div class="flex items-start gap-3">
+          <div class="pt-0.5 shrink-0">
+            <input type="checkbox" ${isSelected ? 'checked' : ''} onclick="event.stopPropagation(); toggleSelect(${i})"
+              class="w-5 h-5 rounded border-gray-300 text-primary-600 focus:ring-primary-500 cursor-pointer">
+          </div>
+          <div class="flex-1 min-w-0 cursor-pointer" onclick="openDetail(${i})">
             <div class="flex items-center gap-2 mb-1">
               <h3 class="font-semibold text-gray-900 truncate">${esc(p.prefix)} ${esc(p.firstName)} ${esc(p.lastName)}</h3>
               ${p.rpps ? `<span class="text-xs bg-primary-50 text-primary-700 px-2 py-0.5 rounded-full font-medium shrink-0">RPPS ${esc(p.rpps)}</span>` : ''}
@@ -308,7 +325,7 @@ function renderResults(results) {
               class="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
             </button>
-            <svg class="w-4 h-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+            <svg class="w-4 h-4 text-gray-300 cursor-pointer" onclick="openDetail(${i})" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
           </div>
         </div>
       </div>`;
@@ -424,12 +441,73 @@ async function copyCurrentCard() {
   showToast('Fiche copiée !');
 }
 
+// ─── Selection ───
+function toggleSelect(index) {
+  if (selectedIndices.has(index)) {
+    selectedIndices.delete(index);
+  } else {
+    selectedIndices.add(index);
+  }
+  // Update just the card border without full re-render
+  const cards = document.getElementById('results').children;
+  if (cards[index]) {
+    const card = cards[index];
+    const isSelected = selectedIndices.has(index);
+    card.className = card.className
+      .replace(/border-primary-400 ring-2 ring-primary-100/g, '')
+      .replace(/border-gray-200/g, '');
+    card.classList.add(isSelected ? 'border-primary-400' : 'border-gray-200');
+    if (isSelected) card.classList.add('ring-2', 'ring-primary-100');
+    else card.classList.remove('ring-2', 'ring-primary-100');
+  }
+  updateSelectionUI();
+}
+
+function toggleSelectAll() {
+  if (selectedIndices.size === currentResults.length) {
+    // Deselect all
+    selectedIndices = new Set();
+  } else {
+    // Select all
+    selectedIndices = new Set(currentResults.map((_, i) => i));
+  }
+  renderResults(currentResults);
+  updateSelectionUI();
+}
+
+function updateSelectionUI() {
+  const countEl = document.getElementById('selection-count');
+  const btnAll = document.getElementById('btn-select-all');
+  const btnExport = document.getElementById('btn-export');
+
+  if (selectedIndices.size > 0) {
+    countEl.textContent = `${selectedIndices.size} sélectionné${selectedIndices.size > 1 ? 's' : ''}`;
+    countEl.classList.remove('hidden');
+    btnExport.querySelector('svg + *')?.remove();
+    btnExport.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg> Export sélection (${selectedIndices.size})`;
+  } else {
+    countEl.classList.add('hidden');
+    if (btnExport.classList.contains('flex')) {
+      btnExport.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg> Export CSV (tout)`;
+    }
+  }
+
+  if (currentResults.length > 0) {
+    btnAll.textContent = selectedIndices.size === currentResults.length ? 'Tout désélectionner' : 'Tout sélectionner';
+  }
+}
+
 // ─── CSV Export ───
 function exportCSV() {
   if (!currentResults.length) return;
 
+  // If some are selected, export only those; otherwise export all
+  const toExport = selectedIndices.size > 0
+    ? [...selectedIndices].sort((a, b) => a - b).map(i => currentResults[i])
+    : currentResults;
+
   const headers = ['Nom', 'Prénom', 'RPPS', 'ADELI', 'Spécialités', 'Adresse', 'Code Postal', 'Ville', 'Téléphone', 'Email', 'Structure'];
-  const rows = currentResults.map(p => {
+  const rows = toExport.map(p => {
     const adeli = p.identifiers?.find(i => i.type === 'ADELI')?.value || '';
     const specs = [...new Set(p.roles?.flatMap(r => r.specialties || []) || [])].join('; ');
     const mainRole = p.roles?.[0] || {};
@@ -481,8 +559,11 @@ function clearForm() {
   document.getElementById('result-count').textContent = '';
   document.getElementById('empty-state').classList.remove('hidden');
   document.getElementById('btn-export').classList.add('hidden');
+  document.getElementById('btn-select-all').classList.add('hidden');
+  document.getElementById('selection-count').classList.add('hidden');
   hideError();
   currentResults = [];
+  selectedIndices = new Set();
 }
 
 function showToast(msg, type = 'success') {
