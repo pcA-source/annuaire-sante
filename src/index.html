@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Annuaire Santé — Recherche de professionnels</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: { 50: '#eff6ff', 100: '#dbeafe', 200: '#bfdbfe', 300: '#93c5fd', 400: '#60a5fa', 500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8', 800: '#1e40af', 900: '#1e3a8a' },
+            accent: { 50: '#f0fdf4', 100: '#dcfce7', 500: '#22c55e', 600: '#16a34a' },
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    body { font-family: 'Inter', sans-serif; }
+    .fade-in { animation: fadeIn 0.3s ease-in; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    .spinner { border: 3px solid #e5e7eb; border-top-color: #3b82f6; border-radius: 50%; width: 24px; height: 24px; animation: spin 0.6s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .toast { animation: slideIn 0.3s ease-out, fadeOut 0.3s ease-in 1.7s forwards; }
+    @keyframes slideIn { from { transform: translateY(20px); opacity: 0; } }
+    @keyframes fadeOut { to { opacity: 0; transform: translateY(-10px); } }
+    .card-hover { transition: box-shadow 0.2s, transform 0.15s; }
+    .card-hover:hover { box-shadow: 0 4px 20px rgba(0,0,0,0.08); transform: translateY(-1px); }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+  <!-- Header -->
+  <header class="bg-white border-b border-gray-200 sticky top-0 z-50">
+    <div class="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 bg-primary-600 rounded-xl flex items-center justify-center">
+          <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+          </svg>
+        </div>
+        <div>
+          <h1 class="text-lg font-bold text-gray-900">Annuaire Santé</h1>
+          <p class="text-xs text-gray-500">Recherche de professionnels de santé</p>
+        </div>
+      </div>
+      <button onclick="exportCSV()" id="btn-export" class="hidden items-center gap-2 px-4 py-2 bg-accent-500 hover:bg-accent-600 text-white text-sm font-medium rounded-lg transition-colors">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+        Export CSV
+      </button>
+    </div>
+  </header>
+
+  <!-- Search Section -->
+  <main class="max-w-6xl mx-auto px-4 py-8">
+    <div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 mb-8">
+      <form id="search-form" onsubmit="doSearch(event)" class="space-y-4">
+        <!-- Row 1 : Name + RPPS -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div class="md:col-span-2">
+            <label class="block text-sm font-medium text-gray-700 mb-1">Nom du professionnel</label>
+            <input type="text" id="input-name" placeholder="Ex : Dupont, Martin Jean..."
+              class="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all text-sm">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">N° RPPS</label>
+            <input type="text" id="input-rpps" placeholder="Ex : 10101234567"
+              class="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all text-sm">
+          </div>
+        </div>
+        <!-- Row 2 : City + Specialty -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Ville</label>
+            <input type="text" id="input-city" placeholder="Ex : Paris, Lyon, Marseille..."
+              class="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all text-sm">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Spécialité</label>
+            <input type="text" id="input-specialty" placeholder="Ex : Cardiologue, Chirurgien..."
+              class="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all text-sm">
+          </div>
+        </div>
+        <!-- Submit -->
+        <div class="flex items-center gap-4">
+          <button type="submit" id="btn-search"
+            class="px-6 py-2.5 bg-primary-600 hover:bg-primary-700 text-white font-medium rounded-lg transition-colors flex items-center gap-2 text-sm">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+            Rechercher
+          </button>
+          <button type="button" onclick="clearForm()" class="px-4 py-2.5 text-gray-600 hover:text-gray-800 text-sm font-medium transition-colors">
+            Effacer
+          </button>
+          <div id="loading" class="hidden"><div class="spinner"></div></div>
+          <span id="result-count" class="text-sm text-gray-500 ml-auto"></span>
+        </div>
+      </form>
+    </div>
+
+    <!-- Results -->
+    <div id="results" class="space-y-4"></div>
+
+    <!-- Empty state -->
+    <div id="empty-state" class="text-center py-16">
+      <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+        <svg class="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17.982 18.725A7.488 7.488 0 0012 15.75a7.488 7.488 0 00-5.982 2.975m11.963 0a9 9 0 10-11.963 0m11.963 0A8.966 8.966 0 0112 21a8.966 8.966 0 01-5.982-2.275M15 9.75a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+      </div>
+      <p class="text-gray-500 text-sm">Recherchez un professionnel de santé par nom, RPPS, ville ou spécialité</p>
+    </div>
+
+    <!-- Error state -->
+    <div id="error-state" class="hidden">
+      <div class="bg-red-50 border border-red-200 rounded-xl p-6 text-center">
+        <p class="text-red-700 font-medium mb-1">Erreur lors de la recherche</p>
+        <p id="error-msg" class="text-red-600 text-sm"></p>
+      </div>
+    </div>
+  </main>
+
+  <!-- Toast container -->
+  <div id="toasts" class="fixed bottom-4 right-4 z-50 space-y-2"></div>
+
+  <!-- Detail Modal -->
+  <div id="modal-overlay" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onclick="closeModal(event)">
+    <div class="bg-white rounded-2xl max-w-lg w-full max-h-[85vh] overflow-y-auto shadow-2xl" onclick="event.stopPropagation()">
+      <div class="sticky top-0 bg-white border-b border-gray-100 px-6 py-4 flex items-center justify-between rounded-t-2xl">
+        <h2 class="font-bold text-gray-900">Fiche praticien</h2>
+        <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600 transition-colors">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div id="modal-body" class="px-6 py-4"></div>
+      <div class="sticky bottom-0 bg-white border-t border-gray-100 px-6 py-3 flex gap-3 rounded-b-2xl">
+        <button onclick="copyCurrentCard()" class="flex-1 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium rounded-lg transition-colors flex items-center justify-center gap-2">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/></svg>
+          Copier la fiche
+        </button>
+        <button onclick="closeModal()" class="px-4 py-2 text-gray-600 hover:text-gray-800 text-sm font-medium border border-gray-300 rounded-lg transition-colors">
+          Fermer
+        </button>
+      </div>
+    </div>
+  </div>
+
+<script>
+// ─── Config ───
+const API_URL = '/api'; // Cloudflare Worker proxy (same domain)
+
+let currentResults = [];
+let currentDetail = null;
+
+// ─── Search ───
+async function doSearch(e) {
+  e.preventDefault();
+  const name = document.getElementById('input-name').value.trim();
+  const rpps = document.getElementById('input-rpps').value.trim();
+  const city = document.getElementById('input-city').value.trim();
+  const specialty = document.getElementById('input-specialty').value.trim();
+
+  if (!name && !rpps && !city && !specialty) {
+    showToast('Remplis au moins un critère de recherche', 'warn');
+    return;
+  }
+
+  setLoading(true);
+  hideError();
+
+  const params = new URLSearchParams();
+  if (name) params.set('name', name);
+  if (rpps) params.set('rpps', rpps);
+  if (city) params.set('city', city);
+  if (specialty) params.set('specialty', specialty);
+
+  try {
+    const res = await fetch(`${API_URL}/search?${params.toString()}`);
+    if (!res.ok) throw new Error(`Erreur ${res.status}`);
+    const data = await res.json();
+
+    currentResults = data.results || [];
+    renderResults(currentResults);
+    document.getElementById('result-count').textContent =
+      `${currentResults.length} résultat${currentResults.length > 1 ? 's' : ''}`;
+    document.getElementById('btn-export').classList.toggle('hidden', currentResults.length === 0);
+    document.getElementById('btn-export').classList.toggle('flex', currentResults.length > 0);
+  } catch (err) {
+    showError(err.message);
+    currentResults = [];
+    document.getElementById('results').innerHTML = '';
+    document.getElementById('result-count').textContent = '';
+  } finally {
+    setLoading(false);
+  }
+}
+
+// ─── Render ───
+function renderResults(results) {
+  const container = document.getElementById('results');
+  const empty = document.getElementById('empty-state');
+
+  if (results.length === 0) {
+    container.innerHTML = '<div class="text-center py-12 text-gray-500 text-sm">Aucun résultat trouvé. Essayez avec d\'autres critères.</div>';
+    empty.classList.add('hidden');
+    return;
+  }
+
+  empty.classList.add('hidden');
+  container.innerHTML = results.map((p, i) => {
+    const mainRole = p.roles?.[0] || {};
+    const specs = p.roles?.flatMap(r => r.specialties || []).filter(Boolean) || [];
+    const uniqueSpecs = [...new Set(specs)];
+    const qualifs = p.qualifications?.map(q => q.display).filter(Boolean) || [];
+    const displayQualifs = [...new Set([...uniqueSpecs, ...qualifs])].slice(0, 3);
+    const displayAddress = mainRole.address || mainRole.organization?.address || '';
+    const displayOrg = mainRole.organization?.name || '';
+
+    return `
+      <div class="bg-white rounded-xl border border-gray-200 p-5 card-hover fade-in cursor-pointer" onclick="openDetail(${i})" style="animation-delay: ${i * 50}ms">
+        <div class="flex items-start justify-between gap-4">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 mb-1">
+              <h3 class="font-semibold text-gray-900 truncate">${esc(p.prefix)} ${esc(p.firstName)} ${esc(p.lastName)}</h3>
+              ${p.rpps ? `<span class="text-xs bg-primary-50 text-primary-700 px-2 py-0.5 rounded-full font-medium shrink-0">RPPS ${esc(p.rpps)}</span>` : ''}
+            </div>
+            ${displayQualifs.length ? `<p class="text-sm text-primary-600 mb-1">${displayQualifs.map(esc).join(' · ')}</p>` : ''}
+            ${displayOrg ? `<p class="text-sm text-gray-600 mb-0.5">🏥 ${esc(displayOrg)}</p>` : ''}
+            ${displayAddress ? `<p class="text-sm text-gray-500 flex items-center gap-1">
+              <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+              ${esc(displayAddress)}
+            </p>` : ''}
+          </div>
+          <div class="flex items-center gap-2 shrink-0">
+            <button onclick="event.stopPropagation(); copyCard(${i})" title="Copier la fiche"
+              class="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+            </button>
+            <svg class="w-4 h-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+// ─── Detail Modal ───
+function openDetail(index) {
+  const p = currentResults[index];
+  if (!p) return;
+  currentDetail = p;
+
+  const body = document.getElementById('modal-body');
+  const telecoms = p.roles?.flatMap(r => r.telecoms || []).filter(t => t.value) || [];
+  const uniqueTelecoms = [];
+  const seenTel = new Set();
+  for (const t of telecoms) {
+    const key = `${t.system}:${t.value}`;
+    if (!seenTel.has(key)) { seenTel.add(key); uniqueTelecoms.push(t); }
+  }
+
+  const specs = [...new Set(p.roles?.flatMap(r => r.specialties || []) || [])];
+  const qualifs = [...new Set(p.qualifications?.map(q => q.display).filter(Boolean) || [])];
+
+  body.innerHTML = `
+    <div class="space-y-4">
+      <div>
+        <p class="text-xl font-bold text-gray-900">${esc(p.prefix)} ${esc(p.firstName)} ${esc(p.lastName)}</p>
+        ${p.rpps ? `<p class="text-sm text-gray-500 mt-1">RPPS : ${esc(p.rpps)}</p>` : ''}
+        ${p.identifiers?.filter(i => i.type === 'ADELI').map(i => `<p class="text-sm text-gray-500">ADELI : ${esc(i.value)}</p>`).join('') || ''}
+      </div>
+      ${qualifs.length || specs.length ? `
+      <div>
+        <h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Qualifications & Spécialités</h4>
+        <div class="flex flex-wrap gap-2">
+          ${[...specs, ...qualifs].map(s => `<span class="px-2.5 py-1 bg-primary-50 text-primary-700 rounded-full text-xs font-medium">${esc(s)}</span>`).join('')}
+        </div>
+      </div>` : ''}
+      ${p.roles?.length ? p.roles.map((role, ri) => `
+      <div class="bg-gray-50 rounded-lg p-3">
+        <h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Lieu d'exercice${p.roles.length > 1 ? ` ${ri + 1}` : ''}</h4>
+        ${role.address ? `<p class="text-sm text-gray-700 mb-1">📍 ${esc(role.address)}</p>` : ''}
+        ${role.organization?.name ? `<p class="text-sm text-gray-700 mb-1">🏥 ${esc(role.organization.name)}</p>` : ''}
+        ${role.specialties?.length ? `<p class="text-sm text-gray-600">${role.specialties.map(esc).join(', ')}</p>` : ''}
+      </div>`).join('') : ''}
+      ${uniqueTelecoms.length ? `
+      <div>
+        <h4 class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Contact</h4>
+        <div class="space-y-1">
+          ${uniqueTelecoms.map(t => `
+            <p class="text-sm text-gray-700">
+              ${t.system === 'phone' ? '📞' : t.system === 'email' ? '✉️' : t.system === 'fax' ? '📠' : '📋'}
+              ${esc(t.value)}
+              ${t.use ? `<span class="text-gray-400 text-xs">(${esc(t.use)})</span>` : ''}
+            </p>`).join('')}
+        </div>
+      </div>` : ''}
+    </div>`;
+
+  document.getElementById('modal-overlay').classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeModal(e) {
+  if (e && e.target !== e.currentTarget) return;
+  document.getElementById('modal-overlay').classList.add('hidden');
+  document.body.style.overflow = '';
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+// ─── Copy ───
+function formatCardText(p) {
+  const lines = [];
+  lines.push(`${p.prefix || ''} ${p.firstName} ${p.lastName}`.trim());
+  if (p.rpps) lines.push(`RPPS : ${p.rpps}`);
+  const adeli = p.identifiers?.find(i => i.type === 'ADELI');
+  if (adeli) lines.push(`ADELI : ${adeli.value}`);
+
+  const specs = [...new Set(p.roles?.flatMap(r => r.specialties || []) || [])];
+  const qualifs = [...new Set(p.qualifications?.map(q => q.display).filter(Boolean) || [])];
+  const allQualifs = [...new Set([...specs, ...qualifs])];
+  if (allQualifs.length) lines.push(`Spécialités : ${allQualifs.join(', ')}`);
+
+  for (const role of (p.roles || [])) {
+    if (role.address) lines.push(`Adresse : ${role.address}`);
+    if (role.organization?.name) lines.push(`Structure : ${role.organization.name}`);
+  }
+
+  const telecoms = p.roles?.flatMap(r => r.telecoms || []).filter(t => t.value) || [];
+  const seen = new Set();
+  for (const t of telecoms) {
+    const key = `${t.system}:${t.value}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const label = t.system === 'phone' ? 'Tél' : t.system === 'email' ? 'Email' : t.system === 'fax' ? 'Fax' : 'Contact';
+    lines.push(`${label} : ${t.value}`);
+  }
+
+  return lines.join('\n');
+}
+
+async function copyCard(index) {
+  const p = currentResults[index];
+  if (!p) return;
+  await navigator.clipboard.writeText(formatCardText(p));
+  showToast('Fiche copiée !');
+}
+
+async function copyCurrentCard() {
+  if (!currentDetail) return;
+  await navigator.clipboard.writeText(formatCardText(currentDetail));
+  showToast('Fiche copiée !');
+}
+
+// ─── CSV Export ───
+function exportCSV() {
+  if (!currentResults.length) return;
+
+  const headers = ['Nom', 'Prénom', 'RPPS', 'ADELI', 'Spécialités', 'Adresse', 'Code Postal', 'Ville', 'Téléphone', 'Email', 'Structure'];
+  const rows = currentResults.map(p => {
+    const adeli = p.identifiers?.find(i => i.type === 'ADELI')?.value || '';
+    const specs = [...new Set(p.roles?.flatMap(r => r.specialties || []) || [])].join('; ');
+    const mainRole = p.roles?.[0] || {};
+    const phones = p.roles?.flatMap(r => r.telecoms?.filter(t => t.system === 'phone').map(t => t.value) || []) || [];
+    const emails = p.roles?.flatMap(r => r.telecoms?.filter(t => t.system === 'email').map(t => t.value) || []) || [];
+    const orgName = mainRole.organization?.name || '';
+
+    return [
+      p.lastName, p.firstName, p.rpps || '', adeli, specs,
+      mainRole.address || '', mainRole.postalCode || '', mainRole.city || '',
+      [...new Set(phones)].join('; '), [...new Set(emails)].join('; '), orgName
+    ];
+  });
+
+  const csvContent = [headers, ...rows]
+    .map(row => row.map(cell => `"${(cell || '').replace(/"/g, '""')}"`).join(','))
+    .join('\n');
+
+  const BOM = '\uFEFF';
+  const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `annuaire-sante-${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast('CSV téléchargé !');
+}
+
+// ─── Helpers ───
+function setLoading(on) {
+  document.getElementById('loading').classList.toggle('hidden', !on);
+  document.getElementById('btn-search').disabled = on;
+}
+
+function showError(msg) {
+  document.getElementById('error-state').classList.remove('hidden');
+  document.getElementById('error-msg').textContent = msg;
+  document.getElementById('empty-state').classList.add('hidden');
+}
+
+function hideError() {
+  document.getElementById('error-state').classList.add('hidden');
+}
+
+function clearForm() {
+  ['input-name', 'input-rpps', 'input-city', 'input-specialty'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('results').innerHTML = '';
+  document.getElementById('result-count').textContent = '';
+  document.getElementById('empty-state').classList.remove('hidden');
+  document.getElementById('btn-export').classList.add('hidden');
+  hideError();
+  currentResults = [];
+}
+
+function showToast(msg, type = 'success') {
+  const container = document.getElementById('toasts');
+  const colors = type === 'success' ? 'bg-green-600' : type === 'warn' ? 'bg-yellow-500' : 'bg-red-500';
+  const div = document.createElement('div');
+  div.className = `toast px-4 py-2.5 ${colors} text-white text-sm font-medium rounded-lg shadow-lg`;
+  div.textContent = msg;
+  container.appendChild(div);
+  setTimeout(() => div.remove(), 2200);
+}
+
+function esc(str) {
+  if (!str) return '';
+  const d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+</script>
+</body>
+</html>

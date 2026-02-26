@@ -1,0 +1,6 @@
+name = "annuaire-sante-api"
+main = "index.js"
+compatibility_date = "2024-01-01"
+
+[vars]
+ESANTE_API_KEY = "REPLACE_IN_CLOUDFLARE_DASHBOARD"
