@@ -48,7 +48,10 @@
         </div>
       </div>
       <div class="flex items-center gap-3">
-        <span id="selection-count" class="hidden text-sm font-medium text-primary-700 bg-primary-50 px-3 py-1.5 rounded-full"></span>
+        <button onclick="toggleBasketPanel()" id="btn-basket" class="hidden items-center gap-2 px-3 py-2 text-primary-700 bg-primary-50 hover:bg-primary-100 text-sm font-medium rounded-lg transition-colors relative">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 100 4 2 2 0 000-4z"/></svg>
+          <span id="basket-count">0</span> sélectionné(s)
+        </button>
         <button onclick="toggleSelectAll()" id="btn-select-all" class="hidden items-center gap-2 px-3 py-2 text-gray-600 hover:text-gray-800 text-sm font-medium border border-gray-300 rounded-lg transition-colors">
           Tout sélectionner
         </button>
@@ -132,6 +135,33 @@
 
   <!-- Toast container -->
   <div id="toasts" class="fixed bottom-4 right-4 z-50 space-y-2"></div>
+
+  <!-- Basket Panel -->
+  <div id="basket-panel" class="hidden fixed inset-0 z-40">
+    <div class="absolute inset-0 bg-black/30" onclick="toggleBasketPanel()"></div>
+    <div class="absolute right-0 top-0 h-full w-full max-w-md bg-white shadow-2xl flex flex-col">
+      <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+        <h2 class="font-bold text-gray-900">Ma sélection</h2>
+        <div class="flex items-center gap-3">
+          <button onclick="clearBasket()" class="text-sm text-red-500 hover:text-red-700 font-medium">Tout vider</button>
+          <button onclick="toggleBasketPanel()" class="text-gray-400 hover:text-gray-600">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+      </div>
+      <div id="basket-list" class="flex-1 overflow-y-auto px-6 py-4 space-y-3"></div>
+      <div class="px-6 py-4 border-t border-gray-200 space-y-2">
+        <button onclick="exportBasketCSV()" class="w-full px-4 py-2.5 bg-accent-500 hover:bg-accent-600 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2 text-sm">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+          Exporter la sélection en CSV
+        </button>
+        <button onclick="copyAllBasket()" class="w-full px-4 py-2.5 bg-primary-600 hover:bg-primary-700 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2 text-sm">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+          Copier toutes les fiches
+        </button>
+      </div>
+    </div>
+  </div>
 
   <!-- Detail Modal -->
   <div id="modal-overlay" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onclick="closeModal(event)">
@@ -221,6 +251,7 @@ const API_URL = '/api'; // Cloudflare Worker proxy (same domain)
 let currentResults = [];
 let currentDetail = null;
 let selectedIndices = new Set();
+let basket = []; // Panier persistant entre les recherches
 
 // ─── Search ───
 async function doSearch(e) {
@@ -259,7 +290,6 @@ async function doSearch(e) {
     if (!res.ok) throw new Error(data.error || `Erreur ${res.status}`);
 
     currentResults = data.results || [];
-    selectedIndices = new Set();
     renderResults(currentResults);
     const totalFhir = data.totalFhir || 0;
     let countText = `${currentResults.length} résultat${currentResults.length > 1 ? 's' : ''}`;
@@ -268,6 +298,7 @@ async function doSearch(e) {
     }
     document.getElementById('result-count').textContent = countText;
     if (data.message) showToast(data.message, 'warn');
+    updateBasketUI();
     const hasResults = currentResults.length > 0;
     document.getElementById('btn-export').classList.toggle('hidden', !hasResults);
     document.getElementById('btn-export').classList.toggle('flex', hasResults);
@@ -305,7 +336,7 @@ function renderResults(results) {
     const displayAddress = mainRole.address || mainRole.organization?.address || '';
     const displayOrg = mainRole.organization?.name || '';
 
-    const isSelected = selectedIndices.has(i);
+    const isSelected = isInBasket(p);
     return `
       <div class="bg-white rounded-xl border ${isSelected ? 'border-primary-400 ring-2 ring-primary-100' : 'border-gray-200'} p-5 card-hover fade-in" style="animation-delay: ${i * 50}ms">
         <div class="flex items-start gap-3">
@@ -446,73 +477,169 @@ async function copyCurrentCard() {
   showToast('Fiche copiée !');
 }
 
-// ─── Selection ───
+// ─── Selection & Basket ───
+function isInBasket(p) {
+  // Match by RPPS or by id
+  return basket.some(b => (b.rpps && b.rpps === p.rpps) || b.id === p.id);
+}
+
 function toggleSelect(index) {
-  if (selectedIndices.has(index)) {
-    selectedIndices.delete(index);
+  const p = currentResults[index];
+  if (!p) return;
+
+  if (isInBasket(p)) {
+    // Remove from basket
+    basket = basket.filter(b => !((b.rpps && b.rpps === p.rpps) || b.id === p.id));
   } else {
-    selectedIndices.add(index);
+    // Add to basket
+    basket.push(p);
   }
-  // Update just the card border without full re-render
+
+  // Update card visual
   const cards = document.getElementById('results').children;
   if (cards[index]) {
     const card = cards[index];
-    const isSelected = selectedIndices.has(index);
+    const inBasket = isInBasket(p);
     card.className = card.className
       .replace(/border-primary-400 ring-2 ring-primary-100/g, '')
       .replace(/border-gray-200/g, '');
-    card.classList.add(isSelected ? 'border-primary-400' : 'border-gray-200');
-    if (isSelected) card.classList.add('ring-2', 'ring-primary-100');
+    card.classList.add(inBasket ? 'border-primary-400' : 'border-gray-200');
+    if (inBasket) card.classList.add('ring-2', 'ring-primary-100');
     else card.classList.remove('ring-2', 'ring-primary-100');
+    // Update checkbox
+    const cb = card.querySelector('input[type=checkbox]');
+    if (cb) cb.checked = inBasket;
   }
-  updateSelectionUI();
+  updateBasketUI();
 }
 
 function toggleSelectAll() {
-  if (selectedIndices.size === currentResults.length) {
-    // Deselect all
-    selectedIndices = new Set();
+  const allInBasket = currentResults.every(p => isInBasket(p));
+  if (allInBasket) {
+    // Remove all current results from basket
+    const currentIds = new Set(currentResults.map(p => p.rpps || p.id));
+    basket = basket.filter(b => !currentIds.has(b.rpps || b.id));
   } else {
-    // Select all
-    selectedIndices = new Set(currentResults.map((_, i) => i));
+    // Add all current results to basket (skip duplicates)
+    for (const p of currentResults) {
+      if (!isInBasket(p)) basket.push(p);
+    }
   }
   renderResults(currentResults);
-  updateSelectionUI();
+  updateBasketUI();
 }
 
-function updateSelectionUI() {
-  const countEl = document.getElementById('selection-count');
+function updateBasketUI() {
+  const btnBasket = document.getElementById('btn-basket');
   const btnAll = document.getElementById('btn-select-all');
-  const btnExport = document.getElementById('btn-export');
+  const countEl = document.getElementById('basket-count');
 
-  if (selectedIndices.size > 0) {
-    countEl.textContent = `${selectedIndices.size} sélectionné${selectedIndices.size > 1 ? 's' : ''}`;
-    countEl.classList.remove('hidden');
-    btnExport.querySelector('svg + *')?.remove();
-    btnExport.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg> Export sélection (${selectedIndices.size})`;
+  // Always show basket button if there are items
+  if (basket.length > 0) {
+    btnBasket.classList.remove('hidden');
+    btnBasket.classList.add('flex');
   } else {
-    countEl.classList.add('hidden');
-    if (btnExport.classList.contains('flex')) {
+    btnBasket.classList.add('hidden');
+    btnBasket.classList.remove('flex');
+  }
+  countEl.textContent = basket.length;
+
+  // Update "tout sélectionner" button text
+  if (currentResults.length > 0) {
+    const allInBasket = currentResults.every(p => isInBasket(p));
+    btnAll.textContent = allInBasket ? 'Tout désélectionner' : 'Tout sélectionner';
+  }
+
+  // Update export button
+  const btnExport = document.getElementById('btn-export');
+  if (btnExport.classList.contains('flex')) {
+    if (basket.length > 0) {
+      btnExport.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg> Export sélection (${basket.length})`;
+    } else {
       btnExport.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg> Export CSV (tout)`;
     }
   }
 
-  if (currentResults.length > 0) {
-    btnAll.textContent = selectedIndices.size === currentResults.length ? 'Tout désélectionner' : 'Tout sélectionner';
+  // Update basket panel if open
+  renderBasketPanel();
+}
+
+function toggleBasketPanel() {
+  const panel = document.getElementById('basket-panel');
+  panel.classList.toggle('hidden');
+  if (!panel.classList.contains('hidden')) {
+    renderBasketPanel();
+    document.body.style.overflow = 'hidden';
+  } else {
+    document.body.style.overflow = '';
   }
+}
+
+function renderBasketPanel() {
+  const list = document.getElementById('basket-list');
+  if (!list) return;
+
+  if (basket.length === 0) {
+    list.innerHTML = '<div class="text-center py-8 text-gray-400 text-sm">Aucun professionnel sélectionné.<br>Cochez des résultats pour les ajouter ici.</div>';
+    return;
+  }
+
+  list.innerHTML = basket.map((p, i) => {
+    const mainRole = p.roles?.[0] || {};
+    const displayOrg = mainRole.organization?.name || '';
+    const displayAddress = mainRole.address || mainRole.organization?.address || '';
+    return `
+      <div class="bg-gray-50 rounded-lg p-3 flex items-start gap-3">
+        <div class="flex-1 min-w-0">
+          <p class="font-medium text-gray-900 text-sm truncate">${esc(p.prefix)} ${esc(p.firstName)} ${esc(p.lastName)}</p>
+          ${p.rpps ? `<p class="text-xs text-gray-500">RPPS ${esc(p.rpps)}</p>` : ''}
+          ${displayOrg ? `<p class="text-xs text-gray-500 truncate">🏥 ${esc(displayOrg)}</p>` : ''}
+          ${displayAddress ? `<p class="text-xs text-gray-400 truncate">📍 ${esc(displayAddress)}</p>` : ''}
+        </div>
+        <button onclick="removeFromBasket(${i})" class="shrink-0 p-1 text-gray-400 hover:text-red-500 transition-colors" title="Retirer">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>`;
+  }).join('');
+}
+
+function removeFromBasket(index) {
+  basket.splice(index, 1);
+  renderResults(currentResults); // Refresh checkboxes
+  updateBasketUI();
+}
+
+function clearBasket() {
+  basket = [];
+  renderResults(currentResults);
+  updateBasketUI();
+}
+
+function exportBasketCSV() {
+  if (!basket.length) return;
+  exportCSVFromList(basket);
+  showToast(`${basket.length} fiche(s) exportée(s) !`);
+}
+
+async function copyAllBasket() {
+  if (!basket.length) return;
+  const text = basket.map(p => formatCardText(p)).join('\n\n---\n\n');
+  await navigator.clipboard.writeText(text);
+  showToast(`${basket.length} fiche(s) copiée(s) !`);
 }
 
 // ─── CSV Export ───
 function exportCSV() {
-  if (!currentResults.length) return;
+  // If basket has items, export basket; otherwise export all current results
+  const toExport = basket.length > 0 ? basket : currentResults;
+  if (!toExport.length) return;
+  exportCSVFromList(toExport);
+  showToast(`${toExport.length} fiche(s) exportée(s) !`);
+}
 
-  // If some are selected, export only those; otherwise export all
-  const toExport = selectedIndices.size > 0
-    ? [...selectedIndices].sort((a, b) => a - b).map(i => currentResults[i])
-    : currentResults;
-
+function exportCSVFromList(list) {
   const headers = ['Nom', 'Prénom', 'RPPS', 'ADELI', 'Spécialités', 'Adresse', 'Code Postal', 'Ville', 'Téléphone', 'Email', 'Structure'];
-  const rows = toExport.map(p => {
+  const rows = list.map(p => {
     const adeli = p.identifiers?.find(i => i.type === 'ADELI')?.value || '';
     const specs = [...new Set(p.roles?.flatMap(r => r.specialties || []) || [])].join('; ');
     const mainRole = p.roles?.[0] || {};
@@ -539,7 +666,6 @@ function exportCSV() {
   a.download = `annuaire-sante-${new Date().toISOString().slice(0,10)}.csv`;
   a.click();
   URL.revokeObjectURL(url);
-  showToast('CSV téléchargé !');
 }
 
 // ─── Helpers ───
@@ -565,10 +691,9 @@ function clearForm() {
   document.getElementById('empty-state').classList.remove('hidden');
   document.getElementById('btn-export').classList.add('hidden');
   document.getElementById('btn-select-all').classList.add('hidden');
-  document.getElementById('selection-count').classList.add('hidden');
   hideError();
   currentResults = [];
-  selectedIndices = new Set();
+  // Note: on ne vide PAS le panier quand on efface la recherche
 }
 
 function showToast(msg, type = 'success') {
