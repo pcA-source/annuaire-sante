@@ -58,36 +58,27 @@ async function searchByQualificationCode(code, name, city, count, env) {
     return await searchBySpecialtyAndCity(code, city, count, env);
   }
 
-  // Try multiple name strategies with qualification-code
+  // Build name params — try most precise first, stop on first match
   const parts = name ? name.trim().split(/\s+/) : [];
-  const nameStrategies = [];
+  let bundle = null;
 
   if (parts.length >= 2) {
-    nameStrategies.push({ family: parts[0], given: parts.slice(1).join(' ') });
-    nameStrategies.push({ family: parts[parts.length - 1], given: parts.slice(0, -1).join(' ') });
-    nameStrategies.push({ family: parts[0] });
-    nameStrategies.push({ name: name });
-  } else if (parts.length === 1) {
-    nameStrategies.push({ family: name });
-    nameStrategies.push({ name: name });
-  } else {
-    nameStrategies.push({});
-  }
-
-  let bundle = null;
-  for (const strat of nameStrategies) {
-    const fhirParams = new URLSearchParams();
-    fhirParams.set('qualification-code', code);
-    fhirParams.set('_count', '200');
-    for (const [k, v] of Object.entries(strat)) fhirParams.set(k, v);
-    
-    bundle = await fhirFetch(`${API_BASE}/Practitioner?${fhirParams}`, env);
-    if (bundle.entry?.length > 0) {
-      // If family+given match, prefer it (most precise)
-      if (strat.family && strat.given) break;
-      // If family-only match with single word, use it
-      if (strat.family && !strat.given && parts.length <= 1) break;
+    const p1 = new URLSearchParams({ 'qualification-code': code, family: parts[0], given: parts.slice(1).join(' '), _count: '200' });
+    bundle = await fhirFetch(`${API_BASE}/Practitioner?${p1}`, env);
+    if (!bundle.entry?.length) {
+      const p2 = new URLSearchParams({ 'qualification-code': code, family: parts[parts.length - 1], given: parts.slice(0, -1).join(' '), _count: '200' });
+      bundle = await fhirFetch(`${API_BASE}/Practitioner?${p2}`, env);
     }
+  } else if (parts.length === 1) {
+    const p1 = new URLSearchParams({ 'qualification-code': code, family: name, _count: '200' });
+    bundle = await fhirFetch(`${API_BASE}/Practitioner?${p1}`, env);
+    if (!bundle.entry?.length) {
+      const p2 = new URLSearchParams({ 'qualification-code': code, name: name, _count: '200' });
+      bundle = await fhirFetch(`${API_BASE}/Practitioner?${p2}`, env);
+    }
+  } else {
+    const p1 = new URLSearchParams({ 'qualification-code': code, _count: '200' });
+    bundle = await fhirFetch(`${API_BASE}/Practitioner?${p1}`, env);
   }
 
   if (!bundle?.entry?.length) return jsonResponse({ total: 0, totalFhir: bundle?.total || 0, results: [] });
@@ -115,13 +106,11 @@ async function searchBySpecialtyAndCity(qualCode, city, count, env) {
 
   let allOrgEntries = [...orgBundle.entry];
   // Paginate if more orgs exist
-  let nextOrgUrl = orgBundle.link?.find(l => l.relation === 'next')?.url;
-  let orgPages = 1;
-  while (nextOrgUrl && orgPages < 5) {
+  // Max 1 extra page to stay within Cloudflare subrequest limits
+  const nextOrgUrl = orgBundle.link?.find(l => l.relation === 'next')?.url;
+  if (nextOrgUrl) {
     const nextBundle = await fhirFetch(nextOrgUrl, env);
     if (nextBundle.entry) allOrgEntries.push(...nextBundle.entry);
-    nextOrgUrl = nextBundle.link?.find(l => l.relation === 'next')?.url;
-    orgPages++;
   }
 
   const orgs = {};
@@ -132,16 +121,18 @@ async function searchBySpecialtyAndCity(qualCode, city, count, env) {
     orgIds.push(org.id);
   }
 
-  // Step 2: Find PractitionerRoles linked to those organizations (batched)
+  // Step 2: Find PractitionerRoles linked to those organizations
+  // Limit org batches to stay within Cloudflare's 50 subrequest limit
   const practitionerIds = new Set();
   const rolesByPractitioner = {};
-  const batchSize = 20;
+  const batchSize = 50;
+  const maxOrgBatches = 6; // 6 batches × 50 orgs = 300 orgs max
+  const limitedOrgIds = orgIds.slice(0, batchSize * maxOrgBatches);
 
-  for (let i = 0; i < orgIds.length; i += batchSize) {
-    const batch = orgIds.slice(i, i + batchSize);
+  for (let i = 0; i < limitedOrgIds.length && i / batchSize < maxOrgBatches; i += batchSize) {
+    const batch = limitedOrgIds.slice(i, i + batchSize);
     const roleParams = new URLSearchParams();
     roleParams.set('organization', batch.join(','));
-    roleParams.set('_include', 'PractitionerRole:practitioner');
     roleParams.set('_count', '200');
 
     const roleBundle = await fhirFetch(`${API_BASE}/PractitionerRole?${roleParams}`, env);
@@ -165,10 +156,12 @@ async function searchBySpecialtyAndCity(qualCode, city, count, env) {
   if (practitionerIds.size === 0) return jsonResponse({ total: 0, results: [] });
 
   // Step 3: Fetch those practitioners filtered by qualification-code
+  // Use larger batches, limit total requests
   const matchedPractitioners = [];
   const pidArray = [...practitionerIds];
+  const maxPractBatches = 5;
 
-  for (let i = 0; i < pidArray.length; i += batchSize) {
+  for (let i = 0; i < pidArray.length && i / batchSize < maxPractBatches; i += batchSize) {
     const batch = pidArray.slice(i, i + batchSize);
     const practParams = new URLSearchParams();
     practParams.set('_id', batch.join(','));
@@ -212,60 +205,42 @@ async function searchByRpps(rpps, env) {
 async function searchByName(name, city, specialty, count, env) {
   const parts = name.trim().split(/\s+/);
   
-  // Try multiple strategies and pick the one with the most results
-  const strategies = [];
+  // Strategy: try the most precise search first, fallback if 0 results
+  let bundle = null;
 
   if (parts.length >= 2) {
-    // "Donal Erwan" → try: family=Donal given=Erwan
-    strategies.push({ family: parts[0], given: parts.slice(1).join(' ') });
-    // Also try reversed: family=Erwan given=Donal
-    strategies.push({ family: parts[parts.length - 1], given: parts.slice(0, -1).join(' ') });
-    // Also try just family with first word (maybe "Erwan" is not needed)
-    strategies.push({ family: parts[0] });
-    // Fallback: broad name search
-    strategies.push({ name: name });
+    // Try family=first + given=rest
+    const p1 = new URLSearchParams({ family: parts[0], given: parts.slice(1).join(' '), _count: '200' });
+    bundle = await fhirFetch(`${API_BASE}/Practitioner?${p1}`, env);
+
+    // If 0 results, try reversed: family=last + given=first
+    if (!bundle.entry?.length) {
+      const p2 = new URLSearchParams({ family: parts[parts.length - 1], given: parts.slice(0, -1).join(' '), _count: '200' });
+      bundle = await fhirFetch(`${API_BASE}/Practitioner?${p2}`, env);
+    }
+
+    // If still 0, try just family name (first word)
+    if (!bundle.entry?.length) {
+      const p3 = new URLSearchParams({ family: parts[0], _count: '200' });
+      bundle = await fhirFetch(`${API_BASE}/Practitioner?${p3}`, env);
+    }
   } else {
-    // Single word: try as family name first (exact match), then broad name
-    strategies.push({ family: name });
-    strategies.push({ name: name });
-  }
+    // Single word: try family first
+    const p1 = new URLSearchParams({ family: name, _count: '200' });
+    bundle = await fhirFetch(`${API_BASE}/Practitioner?${p1}`, env);
 
-  let bestBundle = null;
-  let bestCount = 0;
-
-  for (const strategy of strategies) {
-    const p = new URLSearchParams();
-    for (const [k, v] of Object.entries(strategy)) p.set(k, v);
-    p.set('_count', '200');
-
-    const bundle = await fhirFetch(`${API_BASE}/Practitioner?${p}`, env);
-    const entryCount = bundle.entry?.length || 0;
-
-    // If this is a 2-word search with family+given and we got results, prefer it (more precise)
-    if (entryCount > 0 && strategy.family && strategy.given) {
-      bestBundle = bundle;
-      bestCount = entryCount;
-      break; // family+given match is the most precise, use it
-    }
-
-    // Otherwise keep the strategy with the most results
-    if (entryCount > bestCount) {
-      bestBundle = bundle;
-      bestCount = entryCount;
-    }
-
-    // If we already have good results with family-only, stop
-    if (entryCount > 0 && strategy.family && !strategy.given && parts.length === 1) {
-      break;
+    // If 0, try broad name search
+    if (!bundle.entry?.length) {
+      const p2 = new URLSearchParams({ name: name, _count: '200' });
+      bundle = await fhirFetch(`${API_BASE}/Practitioner?${p2}`, env);
     }
   }
 
-  let bundle = bestBundle;
   if (!bundle?.entry?.length) return jsonResponse({ total: 0, totalFhir: bundle?.total || 0, results: [] });
 
   if (!bundle.entry?.length) return jsonResponse({ total: 0, totalFhir: bundle.total || 0, results: [] });
 
-  // If filtering by city or specialty, paginate to get more results (up to 3 pages)
+  // If filtering by city or specialty, paginate 1 extra page for more results
   let allEntries = [...bundle.entry];
   const needsPostFilter = !!(city || specialty);
   if (needsPostFilter && bundle.total > allEntries.length) {
@@ -273,12 +248,6 @@ async function searchByName(name, city, specialty, count, env) {
     if (nextUrl) {
       const page2 = await fhirFetch(nextUrl, env);
       if (page2.entry) allEntries.push(...page2.entry);
-      // Page 3 if still needed
-      const nextUrl2 = page2.link?.find(l => l.relation === 'next')?.url;
-      if (nextUrl2 && allEntries.length < 600) {
-        const page3 = await fhirFetch(nextUrl2, env);
-        if (page3.entry) allEntries.push(...page3.entry);
-      }
     }
   }
 
@@ -364,9 +333,10 @@ async function searchByRoleFilters(city, specialty, count, env) {
 async function fetchRolesForPractitioners(ids, env) {
   const practitionerRoles = [];
   const organizations = {};
-  const batchSize = 20;
+  const batchSize = 50; // Larger batches = fewer subrequests
+  const maxBatches = 6; // Stay within Cloudflare limits
 
-  for (let i = 0; i < ids.length; i += batchSize) {
+  for (let i = 0; i < ids.length && i / batchSize < maxBatches; i += batchSize) {
     const batch = ids.slice(i, i + batchSize);
     const params = new URLSearchParams();
     params.set('practitioner', batch.join(','));
