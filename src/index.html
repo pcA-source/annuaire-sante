@@ -368,6 +368,7 @@ function renderResults(results) {
               ${esc(displayAddress)}
             </p>` : ''}
             ${(() => { const phones = p.roles?.flatMap(r => (r.telecoms || []).filter(t => t.system === 'phone').map(t => t.value)).filter(Boolean) || []; const uniquePhones = [...new Set(phones)]; return uniquePhones.length ? `<p class="text-sm text-gray-500 flex items-center gap-1">📞 ${uniquePhones.map(esc).join(' · ')}</p>` : ''; })()}
+            ${(() => { const emails = p.roles?.flatMap(r => (r.telecoms || []).filter(t => t.system === 'email').map(t => t.value)).filter(Boolean) || []; const uniqueEmails = [...new Set(emails)]; return uniqueEmails.length ? `<p class="text-sm text-gray-500 flex items-center gap-1">✉️ ${uniqueEmails.map(esc).join(' · ')}</p>` : ''; })()}
           </div>
           <div class="flex items-center gap-2 shrink-0">
             <button onclick="event.stopPropagation(); copyCard(${i})" title="Copier la fiche"
@@ -655,15 +656,18 @@ function exportCSVFromList(list) {
   const rows = list.map(p => {
     const adeli = p.identifiers?.find(i => i.type === 'ADELI')?.value || '';
     const specs = [...new Set(p.roles?.flatMap(r => r.specialties || []) || [])].join('; ');
-    const mainRole = p.roles?.[0] || {};
-    const phones = p.roles?.flatMap(r => r.telecoms?.filter(t => t.system === 'phone').map(t => t.value) || []) || [];
-    const emails = p.roles?.flatMap(r => r.telecoms?.filter(t => t.system === 'email').map(t => t.value) || []) || [];
-    const orgName = mainRole.organization?.name || '';
+    const phones = [...new Set(p.roles?.flatMap(r => r.telecoms?.filter(t => t.system === 'phone').map(t => t.value) || []) || [])];
+    const emails = [...new Set(p.roles?.flatMap(r => r.telecoms?.filter(t => t.system === 'email').map(t => t.value) || []) || [])];
+    // Collect all addresses from organizations
+    const addresses = p.roles?.map(r => r.organization?.address).filter(Boolean) || [];
+    const cities = p.roles?.map(r => r.organization?.city).filter(Boolean) || [];
+    const postalCodes = p.roles?.map(r => r.organization?.postalCode).filter(Boolean) || [];
+    const orgNames = [...new Set(p.roles?.map(r => r.organization?.name).filter(Boolean) || [])];
 
     return [
       p.lastName, p.firstName, p.rpps || '', adeli, specs,
-      mainRole.address || '', mainRole.postalCode || '', mainRole.city || '',
-      [...new Set(phones)].join('; '), [...new Set(emails)].join('; '), orgName
+      [...new Set(addresses)].join('; '), [...new Set(postalCodes)].join('; '), [...new Set(cities)].join('; '),
+      phones.join('; '), emails.join('; '), orgNames.join('; ')
     ];
   });
 
