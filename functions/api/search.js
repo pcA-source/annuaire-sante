@@ -21,6 +21,12 @@ export async function onRequest(context) {
 }
 
 async function handleSearch(params, env) {
+  // ─── Handle "load more" pagination ───
+  const nextUrl = params.get('next');
+  if (nextUrl) {
+    return await handleLoadMore(nextUrl, env);
+  }
+
   const name = params.get('name') || '';
   const city = params.get('city') || '';
   const specialty = params.get('specialty') || '';
@@ -49,6 +55,30 @@ async function handleSearch(params, env) {
   }
 
   return jsonResponse({ error: 'Remplis au moins un critère de recherche' }, 400);
+}
+
+// ─── Load More (pagination) ───
+async function handleLoadMore(nextUrl, env) {
+  // Validate URL is from the FHIR API
+  if (!nextUrl.startsWith(API_BASE)) {
+    return jsonResponse({ error: 'Invalid pagination URL' }, 400);
+  }
+
+  const bundle = await fhirFetch(nextUrl, env);
+  if (!bundle?.entry?.length) return jsonResponse({ total: 0, results: [], nextPage: null });
+
+  const practitioners = bundle.entry.map(e => parsePractitioner(e.resource));
+  const roles = await fetchRolesForPractitioners(practitioners.map(p => p.id), env);
+  const results = mergePractitionersAndRoles(practitioners, roles.practitionerRoles, roles.organizations);
+
+  const fhirNext = bundle.link?.find(l => l.relation === 'next')?.url || null;
+
+  return jsonResponse({
+    total: results.length,
+    totalFhir: bundle.total || 0,
+    results,
+    nextPage: fhirNext,
+  });
 }
 
 // ─── Search by qualification-code (specialty) ───
@@ -81,7 +111,7 @@ async function searchByQualificationCode(code, name, city, count, env) {
     bundle = await fhirFetch(`${API_BASE}/Practitioner?${p1}`, env);
   }
 
-  if (!bundle?.entry?.length) return jsonResponse({ total: 0, totalFhir: bundle?.total || 0, results: [] });
+  if (!bundle?.entry?.length) return jsonResponse({ total: 0, totalFhir: bundle?.total || 0, results: [], nextPage: null });
 
   const practitioners = bundle.entry.map(e => parsePractitioner(e.resource));
   const roles = await fetchRolesForPractitioners(practitioners.map(p => p.id), env);
@@ -90,7 +120,8 @@ async function searchByQualificationCode(code, name, city, count, env) {
   // Post-filter by city if provided (when name is also given)
   results = filterByCity(results, city);
 
-  return jsonResponse({ total: results.length, totalFhir: bundle.total || 0, results });
+  const fhirNext = bundle.link?.find(l => l.relation === 'next')?.url || null;
+  return jsonResponse({ total: results.length, totalFhir: bundle.total || 0, results, nextPage: fhirNext });
 }
 
 // ─── Search by specialty + city (reverse lookup via Organizations) ───
@@ -268,6 +299,7 @@ async function searchByName(name, city, specialty, count, env) {
     totalFhir,
     message: totalFhir > 200 && !needsPostFilter ? `${totalFhir} résultats au total — affinez votre recherche (ville, spécialité) pour des résultats plus précis` : undefined,
     results,
+    nextPage: (!needsPostFilter && bundle.link?.find(l => l.relation === 'next')?.url) || null,
   });
 }
 

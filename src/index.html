@@ -116,6 +116,16 @@
     <!-- Results -->
     <div id="results" class="space-y-4"></div>
 
+    <!-- Load more -->
+    <div id="load-more-container" class="hidden text-center py-4">
+      <button onclick="loadMore()" id="btn-load-more"
+        class="px-6 py-2.5 bg-primary-100 hover:bg-primary-200 text-primary-700 font-medium rounded-lg transition-colors text-sm inline-flex items-center gap-2">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+        Charger plus de résultats
+      </button>
+      <div id="loading-more" class="hidden inline-flex items-center gap-2 text-sm text-gray-500"><div class="spinner"></div> Chargement…</div>
+    </div>
+
     <!-- Empty state -->
     <div id="empty-state" class="text-center py-16">
       <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -264,6 +274,7 @@ let currentResults = [];
 let currentDetail = null;
 let selectedIndices = new Set();
 let basket = []; // Panier persistant entre les recherches
+let nextPageUrl = null; // FHIR pagination cursor
 
 // ─── Search ───
 async function doSearch(e) {
@@ -302,13 +313,9 @@ async function doSearch(e) {
     if (!res.ok) throw new Error(data.error || `Erreur ${res.status}`);
 
     currentResults = data.results || [];
+    nextPageUrl = data.nextPage || null;
     renderResults(currentResults);
-    const totalFhir = data.totalFhir || 0;
-    let countText = `${currentResults.length} résultat${currentResults.length > 1 ? 's' : ''}`;
-    if (totalFhir > currentResults.length) {
-      countText += ` sur ${totalFhir.toLocaleString('fr-FR')}`;
-    }
-    document.getElementById('result-count').textContent = countText;
+    updateResultCount(currentResults.length, data.totalFhir || 0);
     if (data.message) showToast(data.message, 'warn');
     updateBasketUI();
     const hasResults = currentResults.length > 0;
@@ -316,6 +323,7 @@ async function doSearch(e) {
     document.getElementById('btn-export').classList.toggle('flex', hasResults);
     document.getElementById('btn-select-all').classList.toggle('hidden', !hasResults);
     document.getElementById('btn-select-all').classList.toggle('flex', hasResults);
+    updateLoadMoreButton();
     updateBasketUI();
   } catch (err) {
     showError(err.message);
@@ -710,6 +718,8 @@ function clearForm() {
   document.getElementById('btn-select-all').classList.add('hidden');
   hideError();
   currentResults = [];
+  nextPageUrl = null;
+  updateLoadMoreButton();
   // Note: on ne vide PAS le panier quand on efface la recherche
 }
 
@@ -721,6 +731,51 @@ function showToast(msg, type = 'success') {
   div.textContent = msg;
   container.appendChild(div);
   setTimeout(() => div.remove(), 2200);
+}
+
+function updateResultCount(loaded, totalFhir) {
+  let countText = `${loaded} résultat${loaded > 1 ? 's' : ''}`;
+  if (totalFhir > loaded) {
+    countText += ` sur ${totalFhir.toLocaleString('fr-FR')}`;
+  }
+  document.getElementById('result-count').textContent = countText;
+}
+
+function updateLoadMoreButton() {
+  const container = document.getElementById('load-more-container');
+  container.classList.toggle('hidden', !nextPageUrl);
+}
+
+async function loadMore() {
+  if (!nextPageUrl) return;
+  const btn = document.getElementById('btn-load-more');
+  const spinner = document.getElementById('loading-more');
+  btn.classList.add('hidden');
+  spinner.classList.remove('hidden');
+
+  try {
+    const res = await fetch(`${API_URL}/search?next=${encodeURIComponent(nextPageUrl)}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `Erreur ${res.status}`);
+
+    const newResults = data.results || [];
+    currentResults = [...currentResults, ...newResults];
+    nextPageUrl = data.nextPage || null;
+
+    renderResults(currentResults);
+    updateResultCount(currentResults.length, data.totalFhir || currentResults.length);
+    updateLoadMoreButton();
+    updateBasketUI();
+
+    if (newResults.length > 0) {
+      showToast(`+${newResults.length} résultat${newResults.length > 1 ? 's' : ''} chargé${newResults.length > 1 ? 's' : ''}`);
+    }
+  } catch (err) {
+    showToast(`Erreur : ${err.message}`, 'error');
+  } finally {
+    btn.classList.remove('hidden');
+    spinner.classList.add('hidden');
+  }
 }
 
 function esc(str) {
